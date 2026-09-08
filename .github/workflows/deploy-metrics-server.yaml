@@ -1,0 +1,164 @@
+name: Deploy metrics-server
+
+on:
+  workflow_dispatch:
+
+env:
+  HELM_VERSION: "v4.1.0"
+  KUBECTL_VERSION: "v1.34.0"
+  RELEASE_NAME: metrics-server
+  NAMESPACE: kube-system
+  CHART_PATH: ./metrics-server
+  VALUES_FILE: ./metrics-server/values.yaml
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy metrics-server to the cluster
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v5
+        with:
+          version: ${{ env.KUBECTL_VERSION }}
+
+      - name: Configure kubectl
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG }}
+        run: |
+          mkdir -p "$HOME/.kube"
+          echo "$KUBECONFIG_B64" | base64 -d > "$HOME/.kube/config"
+          chmod 600 "$HOME/.kube/config"
+          kubectl cluster-info
+          kubectl get nodes
+
+      - name: Update Helm dependencies
+        run: |
+          helm dependency build ${{ env.CHART_PATH }}
+          # helm v4 cannot read packaged .tgz subcharts; extract them
+          for t in ${{ env.CHART_PATH }}/charts/*.tgz; do
+            [ -e "$t" ] || continue
+            tar -xzf "$t" -C "${{ env.CHART_PATH }}/charts" && rm -f "$t"
+          done
+
+      - name: Validate Helm values
+        run: |
+          helm template ${{ env.RELEASE_NAME }} ${{ env.CHART_PATH }} \
+            -f ${{ env.VALUES_FILE }} \
+            --namespace ${{ env.NAMESPACE }} \
+            --validate
+
+      - name: Show pending changes
+        run: |
+          if helm status ${{ env.RELEASE_NAME }} -n ${{ env.NAMESPACE }} > /dev/null 2>&1; then
+            echo "=== Currently deployed values ==="
+            helm get values ${{ env.RELEASE_NAME }} -n ${{ env.NAMESPACE }}
+            echo "=== Values about to be applied ==="
+            cat ${{ env.VALUES_FILE }}
+          else
+            echo "Release does not exist yet; this run performs the initial install."
+          fi
+
+      - name: Deploy metrics-server
+        run: |
+          helm upgrade --install ${{ env.RELEASE_NAME }} ${{ env.CHART_PATH }} \
+            --namespace ${{ env.NAMESPACE }} \
+            --create-namespace \
+            --values ${{ env.VALUES_FILE }} \
+            --wait \
+            --timeout 10m \
+            --history-max 10
+
+      - name: Verify deployment
+        run: |
+          kubectl rollout status deployment/${{ env.RELEASE_NAME }} \
+            -n ${{ env.NAMESPACE }} \
+            --timeout=300s
+
+          echo "=== Metrics API registration ==="
+          kubectl get apiservice v1beta1.metrics.k8s.io
+
+          # The first scrape lands a little after the pod reports ready, so give
+          # `kubectl top` a chance before treating it as a failure.
+          echo "=== Waiting for the first scrape ==="
+          for _ in $(seq 1 12); do
+            if kubectl top nodes > /dev/null 2>&1; then
+              kubectl top nodes
+              exit 0
+            fi
+            sleep 10
+          done
+
+          echo "Metrics API did not serve data within 2 minutes."
+          kubectl logs -n ${{ env.NAMESPACE }} \
+            -l app.kubernetes.io/instance=${{ env.RELEASE_NAME }} --tail=100
+          exit 1
+
+      - name: Report status
+        if: always()
+        run: |
+          echo "=== Helm release status ==="
+          helm status ${{ env.RELEASE_NAME }} -n ${{ env.NAMESPACE }} || true
+
+      - name: Diagnose failure
+        if: failure()
+        run: |
+          kubectl describe pods -n ${{ env.NAMESPACE }} \
+            -l app.kubernetes.io/instance=${{ env.RELEASE_NAME }} || true
+          kubectl logs -n ${{ env.NAMESPACE }} \
+            -l app.kubernetes.io/instance=${{ env.RELEASE_NAME }} --tail=100 || true
+
+  rollback:
+    name: Roll back on failure
+    runs-on: ubuntu-latest
+    needs: deploy
+    if: failure()
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v5
+        with:
+          version: ${{ env.KUBECTL_VERSION }}
+
+      - name: Configure kubectl
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG }}
+        run: |
+          mkdir -p "$HOME/.kube"
+          echo "$KUBECONFIG_B64" | base64 -d > "$HOME/.kube/config"
+          chmod 600 "$HOME/.kube/config"
+
+      - name: Roll back to the previous revision
+        run: |
+          # A failed initial install leaves a single revision with nothing to
+          # roll back to; uninstall it instead so the next run starts clean.
+          revisions=$(helm history ${{ env.RELEASE_NAME }} -n ${{ env.NAMESPACE }} -o json 2>/dev/null | grep -c '"revision"' || echo 0)
+          if [ "$revisions" -lt 2 ]; then
+            echo "No previous revision to roll back to; removing the failed install."
+            helm uninstall ${{ env.RELEASE_NAME }} -n ${{ env.NAMESPACE }} || true
+            exit 0
+          fi
+
+          helm rollback ${{ env.RELEASE_NAME }} -n ${{ env.NAMESPACE }} --wait --timeout 10m
+          kubectl rollout status deployment/${{ env.RELEASE_NAME }} \
+            -n ${{ env.NAMESPACE }} \
+            --timeout=300s
