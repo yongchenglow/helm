@@ -1,0 +1,11 @@
+apiVersion: v2
+name: external-dns
+description: Syncs Kubernetes Ingress and Service hostnames into Cloudflare DNS
+type: application
+version: 1.0.0
+appVersion: "0.21.0"
+
+dependencies:
+  - name: external-dns
+    version: "1.21.1"
+    repository: https://kubernetes-sigs.github.io/external-dns/

@@ -1,0 +1,18 @@
+external-dns has been deployed to namespace {{ .Release.Namespace }}.
+
+Watch it reconcile the zones listed in `domainFilters`:
+
+  kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }} -f
+
+A healthy startup logs "All records are already up to date" or the records it
+created. Two failures are common:
+
+  - "failed to get zones" usually means the Cloudflare API token in the
+    external-dns-cloudflare secret is missing, expired, or lacks Zone:Read and
+    DNS:Edit on the zones in domainFilters.
+  - Records not appearing at all usually means no Ingress or Service carries a
+    hostname inside domainFilters.
+
+The chart runs with policy `upsert-only`, so deleting an Ingress leaves its DNS
+record in Cloudflare. Remove those by hand, or switch the policy to `sync` in
+values.yaml once you trust the TXT registry.

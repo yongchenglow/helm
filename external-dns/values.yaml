@@ -1,0 +1,63 @@
+# Values for the external-dns umbrella chart.
+#
+# Everything under the `external-dns` key is passed straight through to the
+# upstream subchart pinned in Chart.yaml.
+
+external-dns:
+  provider:
+    name: cloudflare
+
+  # Only these zones are ever touched. Leaving this empty lets external-dns
+  # manage every zone the API token can reach, so keep it populated.
+  domainFilters:
+    - example.com
+
+  # `upsert-only` never deletes records: removing an Ingress leaves its DNS
+  # entry behind. Switch to `sync` once the TXT registry below has been running
+  # long enough to trust it to only reap records it created.
+  policy: upsert-only
+
+  # The TXT registry writes an ownership record alongside each managed entry so
+  # external-dns can tell its own records apart from ones created by hand.
+  # txtOwnerId must be unique per cluster sharing a zone, and must not change
+  # afterwards or every existing record looks foreign.
+  registry: txt
+  txtOwnerId: default
+  txtPrefix: externaldns-
+
+  sources:
+    - ingress
+    - service
+
+  interval: 1m
+  logLevel: info
+
+  # Cloudflare API token with Zone:Read and DNS:Edit on the zones above.
+  # Create the secret before the first deploy:
+  #
+  #   kubectl create secret generic external-dns-cloudflare \
+  #     --namespace external-dns \
+  #     --from-literal=apiToken=<token>
+  env:
+    - name: CF_API_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: external-dns-cloudflare
+          key: apiToken
+
+  extraArgs:
+    # Records are created DNS-only. Set to true to have Cloudflare proxy the
+    # traffic, which hides the origin IP but breaks non-HTTP protocols.
+    - --cloudflare-proxied=false
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 128Mi
+
+  # Requires the Prometheus Operator CRDs. Enable once a Prometheus stack is
+  # deployed to this cluster.
+  serviceMonitor:
+    enabled: false
