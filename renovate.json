@@ -1,0 +1,49 @@
+{
+	"$schema": "https://docs.renovatebot.com/renovate-schema.json",
+	"extends": [
+		"config:recommended",
+		":semanticCommits",
+		":dependencyDashboard",
+		"helpers:pinGitHubActionDigests"
+	],
+	"timezone": "Asia/Singapore",
+	"schedule": ["before 6am on monday"],
+	"prConcurrentLimit": 5,
+	"labels": ["dependencies"],
+	"helm-values": {
+		"managerFilePatterns": ["/(^|/)values\\.yaml$/"]
+	},
+	"helmv3": {
+		"managerFilePatterns": ["/(^|/)Chart\\.yaml$/"]
+	},
+	"packageRules": [
+		{
+			"description": "Chart bumps are the point of this repo, so keep them per-chart rather than batched, and label them so the deploy that has to follow is easy to find.",
+			"matchManagers": ["helmv3"],
+			"semanticCommitType": "feat",
+			"semanticCommitScope": "{{parentDir}}",
+			"labels": ["dependencies", "helm-chart"],
+			"commitMessageTopic": "{{depName}} chart"
+		},
+		{
+			"description": "Image tags pinned inside values.yaml follow their chart, so group them with it.",
+			"matchManagers": ["helm-values"],
+			"semanticCommitType": "fix",
+			"semanticCommitScope": "{{parentDir}}"
+		},
+		{
+			"description": "Workflow actions and lint tooling are noise individually; batch them into one weekly PR.",
+			"matchManagers": ["github-actions", "npm"],
+			"groupName": "ci tooling",
+			"semanticCommitType": "chore",
+			"semanticCommitScope": "deps"
+		},
+		{
+			"description": "Kubernetes add-ons frequently ship breaking changes in a minor bump, so never fold those into an automerge or a group.",
+			"matchManagers": ["helmv3"],
+			"matchUpdateTypes": ["major", "minor"],
+			"dependencyDashboardApproval": false,
+			"minimumReleaseAge": "3 days"
+		}
+	]
+}
