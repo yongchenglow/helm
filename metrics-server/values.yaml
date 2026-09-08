@@ -1,0 +1,47 @@
+# Values for the metrics-server umbrella chart.
+#
+# Everything under the `metrics-server` key is passed straight through to the
+# upstream subchart pinned in Chart.yaml.
+
+metrics-server:
+  # A single replica is enough for a single-node/small cluster. Raise to 2 and
+  # set podDisruptionBudget below if the cluster grows enough that losing the
+  # metrics API during a node drain would break autoscaling.
+  replicas: 1
+
+  args:
+    # Scrape kubelets over the port advertised in the Node's status rather than
+    # assuming 10250, and fall back to the internal IP when the kubelet's
+    # hostname does not resolve inside the cluster.
+    - --kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname
+    # Most self-managed clusters issue kubelet serving certificates signed by a
+    # per-node CA that the API server does not trust, which makes the scrape
+    # fail TLS verification. Drop this flag if the cluster runs with
+    # `--rotate-server-certificates` and a properly signed kubelet CA.
+    - --kubelet-insecure-tls
+
+  # Expose metrics-server's own Prometheus metrics. Turn on together with the
+  # serviceMonitor below once a Prometheus stack exists to scrape them.
+  metrics:
+    enabled: false
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 200Mi
+    limits:
+      memory: 200Mi
+
+  # Metrics collection must keep working while the cluster is under pressure,
+  # so schedule alongside the other control-plane add-ons.
+  priorityClassName: system-cluster-critical
+
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+
+  # The upstream chart can install a ServiceMonitor, but that requires the
+  # Prometheus Operator CRDs. Enable once a Prometheus stack is deployed.
+  serviceMonitor:
+    enabled: false

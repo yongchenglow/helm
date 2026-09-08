@@ -1,0 +1,15 @@
+metrics-server has been deployed to namespace {{ .Release.Namespace }}.
+
+Confirm the Metrics API is registered and serving:
+
+  kubectl get apiservice v1beta1.metrics.k8s.io
+  kubectl top nodes
+  kubectl top pods --all-namespaces
+
+`kubectl top` returns "metrics not available yet" for roughly the first minute
+after install while the first scrape completes.
+
+If it keeps failing, the scrape is usually being rejected at the TLS handshake.
+Check the logs and revisit the `--kubelet-insecure-tls` arg in values.yaml:
+
+  kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }}
