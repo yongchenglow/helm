@@ -1,0 +1,28 @@
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Helm
+*.tgz
+charts/
+Chart.lock
+
+# IDEs
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Claude
+.claude/
+
+# Worktrees
+.worktrees/
+
+# Local secrets
+kubeconfig
+*.kubeconfig
