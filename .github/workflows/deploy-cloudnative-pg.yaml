@@ -1,0 +1,155 @@
+name: Deploy CloudNativePG
+
+on:
+  workflow_dispatch:
+
+env:
+  HELM_VERSION: "v4.1.0"
+  KUBECTL_VERSION: "v1.34.0"
+  RELEASE_NAME: cloudnative-pg
+  NAMESPACE: cnpg-system
+  CHART_PATH: ./cloudnative-pg
+  VALUES_FILE: ./cloudnative-pg/values.yaml
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy CloudNativePG to the cluster
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v5
+        with:
+          version: ${{ env.KUBECTL_VERSION }}
+
+      - name: Configure kubectl
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG }}
+        run: |
+          mkdir -p "$HOME/.kube"
+          echo "$KUBECONFIG_B64" | base64 -d > "$HOME/.kube/config"
+          chmod 600 "$HOME/.kube/config"
+          kubectl cluster-info
+          kubectl get nodes
+
+      - name: Update Helm dependencies
+        run: |
+          helm dependency update ${{ env.CHART_PATH }}
+          # helm v4 cannot read packaged .tgz subcharts; extract them
+          for t in ${{ env.CHART_PATH }}/charts/*.tgz; do
+            [ -e "$t" ] || continue
+            tar -xzf "$t" -C "${{ env.CHART_PATH }}/charts" && rm -f "$t"
+          done
+
+      - name: Validate Helm values
+        run: |
+          helm template ${{ env.RELEASE_NAME }} ${{ env.CHART_PATH }} \
+            -f ${{ env.VALUES_FILE }} \
+            --namespace ${{ env.NAMESPACE }} \
+            --validate
+
+      - name: Show pending changes
+        run: |
+          if helm status ${{ env.RELEASE_NAME }} -n ${{ env.NAMESPACE }} > /dev/null 2>&1; then
+            echo "=== Currently deployed values ==="
+            helm get values ${{ env.RELEASE_NAME }} -n ${{ env.NAMESPACE }}
+            echo "=== Values about to be applied ==="
+            cat ${{ env.VALUES_FILE }}
+          else
+            echo "Release does not exist yet; this run performs the initial install."
+          fi
+
+      - name: Deploy CloudNativePG
+        run: |
+          helm upgrade --install ${{ env.RELEASE_NAME }} ${{ env.CHART_PATH }} \
+            --namespace ${{ env.NAMESPACE }} \
+            --create-namespace \
+            --values ${{ env.VALUES_FILE }} \
+            --wait \
+            --timeout 10m \
+            --history-max 10
+
+      - name: Verify operator and CRDs
+        run: |
+          kubectl wait --for=condition=Available deployment \
+            -n ${{ env.NAMESPACE }} \
+            -l app.kubernetes.io/instance=${{ env.RELEASE_NAME }} \
+            --timeout=300s
+
+          kubectl wait --for=condition=Established \
+            crd/clusters.postgresql.cnpg.io \
+            crd/scheduledbackups.postgresql.cnpg.io \
+            --timeout=120s
+
+          kubectl get deployment -n ${{ env.NAMESPACE }} \
+            -l app.kubernetes.io/instance=${{ env.RELEASE_NAME }}
+          kubectl get crd clusters.postgresql.cnpg.io \
+            scheduledbackups.postgresql.cnpg.io
+
+      - name: Report status
+        if: always()
+        run: |
+          echo "=== Helm release status ==="
+          helm status ${{ env.RELEASE_NAME }} -n ${{ env.NAMESPACE }} || true
+
+      - name: Diagnose failure
+        if: failure()
+        run: |
+          kubectl describe pods -n ${{ env.NAMESPACE }} \
+            -l app.kubernetes.io/instance=${{ env.RELEASE_NAME }} || true
+          kubectl logs -n ${{ env.NAMESPACE }} \
+            -l app.kubernetes.io/instance=${{ env.RELEASE_NAME }} --tail=100 || true
+
+  rollback:
+    name: Roll back on failure
+    runs-on: ubuntu-latest
+    needs: deploy
+    if: failure()
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v5
+        with:
+          version: ${{ env.KUBECTL_VERSION }}
+
+      - name: Configure kubectl
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG }}
+        run: |
+          mkdir -p "$HOME/.kube"
+          echo "$KUBECONFIG_B64" | base64 -d > "$HOME/.kube/config"
+          chmod 600 "$HOME/.kube/config"
+
+      - name: Roll back to the previous revision
+        run: |
+          revisions=$(helm history ${{ env.RELEASE_NAME }} -n ${{ env.NAMESPACE }} -o json 2>/dev/null | grep -c '"revision"' || echo 0)
+          if [ "$revisions" -lt 2 ]; then
+            echo "No previous revision to roll back to; removing the failed install."
+            helm uninstall ${{ env.RELEASE_NAME }} -n ${{ env.NAMESPACE }} || true
+            exit 0
+          fi
+
+          helm rollback ${{ env.RELEASE_NAME }} -n ${{ env.NAMESPACE }} --wait --timeout 10m
+          kubectl wait --for=condition=Available deployment \
+            -n ${{ env.NAMESPACE }} \
+            -l app.kubernetes.io/instance=${{ env.RELEASE_NAME }} \
+            --timeout=300s

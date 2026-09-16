@@ -1,0 +1,27 @@
+# Values for the CloudNativePG operator umbrella chart.
+#
+# Everything under the `cloudnative-pg` key is passed straight through to the
+# upstream subchart pinned in Chart.yaml.
+
+cloudnative-pg:
+  # One cluster-wide operator manages CloudNativePG resources in every
+  # namespace, including the metrics database in the metrics namespace.
+  config:
+    clusterWide: true
+
+  crds:
+    create: true
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+  # Requires the Prometheus Operator CRDs. Enable once a Prometheus stack is
+  # deployed to this cluster.
+  monitoring:
+    podMonitorEnabled: false
+    grafanaDashboard:
+      create: false

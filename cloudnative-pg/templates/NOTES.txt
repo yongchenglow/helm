@@ -1,0 +1,14 @@
+CloudNativePG has been deployed to namespace {{ .Release.Namespace }}.
+
+Verify the cluster-wide operator and its CRDs:
+
+  kubectl get deployment -n {{ .Release.Namespace }} \
+    -l app.kubernetes.io/instance={{ .Release.Name }}
+  kubectl get crd clusters.postgresql.cnpg.io
+
+The operator is shared cluster infrastructure. Applications remain responsible
+for their own `Cluster` resources; for example, the engineering metrics project
+owns its PostgreSQL cluster in that application's Helm chart.
+
+Install the Barman Cloud plugin separately before enabling plugin-based backups
+on an application cluster.
