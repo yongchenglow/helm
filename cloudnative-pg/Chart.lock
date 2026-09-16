@@ -1,0 +1,6 @@
+dependencies:
+- name: cloudnative-pg
+  repository: https://raw.githubusercontent.com/cloudnative-pg/charts/gh-pages
+  version: 0.29.0
+digest: sha256:2cbbbdf36ca6c58f4d02acf12d9f2ed813343dc52eef914dc594355065bdd4ee
+generated: "2026-09-16T17:17:33.348034+08:00"

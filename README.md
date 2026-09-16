@@ -15,6 +15,7 @@ can be dropped into `templates/` without diverging from upstream.
 | --- | --- | --- | --- |
 | `metrics-server` | [metrics-server](https://github.com/kubernetes-sigs/metrics-server) | `kube-system` | Resource metrics API backing `kubectl top` and the HorizontalPodAutoscaler |
 | `external-dns` | [external-dns](https://github.com/kubernetes-sigs/external-dns) | `external-dns` | Syncs Ingress and Service hostnames into Cloudflare DNS |
+| `cloudnative-pg` | [CloudNativePG](https://github.com/cloudnative-pg/charts) | `cnpg-system` | Cluster-wide PostgreSQL operator, CRDs, webhooks, and RBAC |
 
 ## Prerequisites
 
@@ -65,6 +66,12 @@ helm upgrade --install metrics-server ./metrics-server \
   --values ./metrics-server/values.yaml \
   --wait
 ```
+
+CloudNativePG installs one cluster-wide operator. Application repositories own
+their database `Cluster` resources and deploy them only after this operator is
+ready. The engineering metrics application follows this split: this repository
+owns the operator, while its application repository owns its PostgreSQL cluster
+and migrations.
 
 ## Cloudflare credentials for external-dns
 
